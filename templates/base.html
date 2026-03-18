@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}HVAC Complaint Tracker{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+{% block body %}
+<div class="app-layout">
+    <nav class="sidebar">
+        <div class="sidebar-brand">
+            <span class="icon">&#9881;</span>
+            <span>HVAC Tickets</span>
+        </div>
+        <ul class="sidebar-nav">
+            <li><a href="{{ url_for('dashboard') }}" class="{% if request.endpoint == 'dashboard' %}active{% endif %}">&#9632; Dashboard</a></li>
+            <li><a href="{{ url_for('complaints_list') }}" class="{% if request.endpoint in ('complaints_list','view_complaint','new_complaint') %}active{% endif %}">&#9993; Complaints</a></li>
+            {% if session.get('role') == 'admin' %}
+            <li><a href="{{ url_for('manage_sites') }}" class="{% if request.endpoint in ('manage_sites',) %}active{% endif %}">&#9873; Job Sites</a></li>
+            <li><a href="{{ url_for('manage_users') }}" class="{% if request.endpoint in ('manage_users','register') %}active{% endif %}">&#9775; Users</a></li>
+            {% endif %}
+        </ul>
+        <div class="sidebar-footer">
+            <div>{{ session.get('full_name', '') }}</div>
+            <div style="margin-top:4px"><a href="{{ url_for('logout') }}">Logout</a></div>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+            <div class="alert alert-{{ category }}">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </main>
+</div>
+{% endblock %}
+</body>
+</html>

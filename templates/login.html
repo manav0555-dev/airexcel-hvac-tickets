@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Login - HVAC Complaint Tracker{% endblock %}
+
+{% block body %}
+<div class="login-page">
+    <div class="login-card">
+        <h1>&#9881; HVAC Tickets</h1>
+        <p class="subtitle">Complaint Tracking System</p>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+            <div class="alert alert-{{ category }}">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+        {% endwith %}
+
+        <form method="POST">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" class="form-control" required autofocus>
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" class="form-control" required>
+            </div>
+            <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center; margin-top:8px;">Log In</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

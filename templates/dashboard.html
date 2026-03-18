@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - HVAC Complaint Tracker{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Dashboard</h1>
+    <a href="{{ url_for('new_complaint') }}" class="btn btn-primary">+ New Complaint</a>
+</div>
+
+<!-- Stats -->
+<div class="stats-grid">
+    <div class="stat-card primary">
+        <div class="stat-value">{{ total }}</div>
+        <div class="stat-label">Total Complaints</div>
+    </div>
+    <div class="stat-card warning">
+        <div class="stat-value">{{ open_count }}</div>
+        <div class="stat-label">Open</div>
+    </div>
+    <div class="stat-card info">
+        <div class="stat-value">{{ in_progress }}</div>
+        <div class="stat-label">In Progress</div>
+    </div>
+    <div class="stat-card success">
+        <div class="stat-value">{{ resolved }}</div>
+        <div class="stat-label">Resolved / Closed</div>
+    </div>
+</div>
+
+<!-- Charts row -->
+<div class="chart-grid">
+    <!-- Priority Breakdown -->
+    <div class="card">
+        <div class="card-header">Active Complaints by Priority</div>
+        <div class="bar-chart">
+            {% set priority_labels = {1: 'P1 - Critical', 2: 'P2 - High', 3: 'P3 - Medium', 4: 'P4 - Low', 5: 'P5 - Minimal'} %}
+            {% set priority_colors = {1: 'danger', 2: 'warning', 3: 'info', 4: 'success', 5: ''} %}
+            {% set max_p = priority_data|map(attribute='cnt')|list|max if priority_data else 1 %}
+            {% for row in priority_data %}
+            <div class="bar-row">
+                <div class="bar-label">{{ priority_labels.get(row['priority'], 'P'~row['priority']) }}</div>
+                <div class="bar-track">
+                    <div class="bar-fill {{ priority_colors.get(row['priority'], '') }}" style="width: {{ (row['cnt'] / max_p * 100)|round }}%">{{ row['cnt'] }}</div>
+                </div>
+            </div>
+            {% endfor %}
+            {% if not priority_data %}
+            <p style="color:var(--gray-500); font-size:.9rem;">No active complaints.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Category Breakdown -->
+    <div class="card">
+        <div class="card-header">Complaints by Category</div>
+        <div class="bar-chart">
+            {% set max_c = category_data|map(attribute='cnt')|list|max if category_data else 1 %}
+            {% for row in category_data %}
+            <div class="bar-row">
+                <div class="bar-label">{{ row['cat'] }}</div>
+                <div class="bar-track">
+                    <div class="bar-fill info" style="width: {{ (row['cnt'] / max_c * 100)|round }}%">{{ row['cnt'] }}</div>
+                </div>
+            </div>
+            {% endfor %}
+            {% if not category_data %}
+            <p style="color:var(--gray-500); font-size:.9rem;">No data yet.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="chart-grid">
+    <!-- Repeat Technicians -->
+    <div class="card">
+        <div class="card-header">Complaints by Technician</div>
+        {% if repeat_technicians %}
+        <div class="bar-chart">
+            {% set max_t = repeat_technicians|map(attribute='complaint_count')|list|max %}
+            {% for row in repeat_technicians %}
+            <div class="bar-row">
+                <div class="bar-label">{{ row['full_name'] }}</div>
+                <div class="bar-track">
+                    <div class="bar-fill {% if row['complaint_count'] >= 5 %}danger{% elif row['complaint_count'] >= 3 %}warning{% else %}info{% endif %}" style="width: {{ (row['complaint_count'] / max_t * 100)|round }}%">{{ row['complaint_count'] }}</div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p style="color:var(--gray-500); font-size:.9rem;">No data yet.</p>
+        {% endif %}
+    </div>
+
+    <!-- Complaints by Job Site -->
+    <div class="card">
+        <div class="card-header">Complaints by Job Site</div>
+        {% if site_data %}
+        <div class="bar-chart">
+            {% set max_s = site_data|map(attribute='cnt')|list|max %}
+            {% for row in site_data %}
+            <div class="bar-row">
+                <div class="bar-label">{{ row['site_name'] }}</div>
+                <div class="bar-track">
+                    <div class="bar-fill" style="width: {{ (row['cnt'] / max_s * 100)|round }}%">{{ row['cnt'] }}</div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p style="color:var(--gray-500); font-size:.9rem;">No data yet.</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Repeat Customers -->
+{% if repeat_customers %}
+<div class="card">
+    <div class="card-header">Repeat Complainants</div>
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Customer Name</th><th>Complaint Count</th></tr></thead>
+            <tbody>
+                {% for row in repeat_customers %}
+                <tr><td>{{ row['customer_name'] }}</td><td>{{ row['complaint_count'] }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Recent Complaints -->
+<div class="card">
+    <div class="card-header">Recent Complaints</div>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th><th>Priority</th><th>Title</th><th>Customer</th>
+                    <th>Technician</th><th>Site</th><th>Status</th><th>Created</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in recent %}
+                <tr>
+                    <td><a href="{{ url_for('view_complaint', complaint_id=c['id']) }}">#{{ c['id'] }}</a></td>
+                    <td><span class="priority-badge priority-{{ c['priority'] }}">{{ c['priority'] }}</span></td>
+                    <td><a href="{{ url_for('view_complaint', complaint_id=c['id']) }}">{{ c['title'] }}</a></td>
+                    <td>{{ c['customer_name'] }}</td>
+                    <td>{{ c['technician_name'] or '—' }}</td>
+                    <td>{{ c['site_name'] or '—' }}</td>
+                    <td><span class="badge badge-{{ c['status'] }}">{{ c['status']|replace('_',' ') }}</span></td>
+                    <td>{{ c['created_at'][:10] }}</td>
+                </tr>
+                {% endfor %}
+                {% if not recent %}
+                <tr><td colspan="8" style="text-align:center; color:var(--gray-500);">No complaints yet.</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

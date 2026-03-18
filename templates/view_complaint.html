@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}Complaint #{{ complaint['id'] }} - HVAC Complaint Tracker{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Complaint #{{ complaint['id'] }}: {{ complaint['title'] }}</h1>
+    <a href="{{ url_for('complaints_list') }}" class="btn btn-secondary">Back to List</a>
+</div>
+
+<div class="detail-grid">
+    <!-- Left: Details -->
+    <div>
+        <div class="card">
+            <div class="card-header">Complaint Details</div>
+
+            <div class="detail-item">
+                <div class="label">Status</div>
+                <div class="value"><span class="badge badge-{{ complaint['status'] }}">{{ complaint['status']|replace('_',' ') }}</span></div>
+            </div>
+
+            <div class="detail-item">
+                <div class="label">Priority</div>
+                <div class="value"><span class="priority-badge priority-{{ complaint['priority'] }}">{{ complaint['priority'] }}</span>
+                    {% set plabels = {1:'Critical',2:'High',3:'Medium',4:'Low',5:'Minimal'} %}
+                    {{ plabels.get(complaint['priority'], '') }}
+                </div>
+            </div>
+
+            <div class="detail-item">
+                <div class="label">Category</div>
+                <div class="value">{{ complaint['category'] or '—' }}</div>
+            </div>
+
+            <div class="detail-item">
+                <div class="label">Description</div>
+                <div class="value" style="white-space:pre-wrap;">{{ complaint['description'] }}</div>
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px;">
+                <div class="detail-item">
+                    <div class="label">Customer</div>
+                    <div class="value">{{ complaint['customer_name'] }}</div>
+                </div>
+                <div class="detail-item">
+                    <div class="label">Phone</div>
+                    <div class="value">{{ complaint['customer_phone'] or '—' }}</div>
+                </div>
+                <div class="detail-item">
+                    <div class="label">Technician</div>
+                    <div class="value">{{ complaint['technician_name'] or 'Unassigned' }}</div>
+                </div>
+                <div class="detail-item">
+                    <div class="label">Job Site</div>
+                    <div class="value">{{ complaint['site_name'] or '—' }}</div>
+                </div>
+                <div class="detail-item">
+                    <div class="label">Created</div>
+                    <div class="value">{{ complaint['created_at'] }}</div>
+                </div>
+                <div class="detail-item">
+                    <div class="label">Created By</div>
+                    <div class="value">{{ complaint['created_by_name'] or '—' }}</div>
+                </div>
+                {% if complaint['resolved_at'] %}
+                <div class="detail-item">
+                    <div class="label">Resolved At</div>
+                    <div class="value">{{ complaint['resolved_at'] }}</div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Notes -->
+        <div class="card">
+            <div class="card-header">Notes & Activity</div>
+            <form method="POST" action="{{ url_for('add_note', complaint_id=complaint['id']) }}" style="margin-bottom:16px;">
+                <div class="form-group">
+                    <textarea name="note" class="form-control" placeholder="Add a note..." required style="min-height:60px;"></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm">Add Note</button>
+            </form>
+
+            {% if notes %}
+            <ul class="notes-list">
+                {% for n in notes %}
+                <li>
+                    <div class="note-meta">{{ n['author_name'] }} &middot; {{ n['created_at'] }}</div>
+                    <div style="white-space:pre-wrap;">{{ n['note'] }}</div>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p style="color:var(--gray-500); font-size:.9rem;">No notes yet.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Right: Actions -->
+    <div>
+        <div class="card">
+            <div class="card-header">Update Complaint</div>
+            <form method="POST" action="{{ url_for('update_complaint', complaint_id=complaint['id']) }}">
+                <div class="form-group">
+                    <label for="status">Status</label>
+                    <select id="status" name="status" class="form-control">
+                        <option value="open" {% if complaint['status']=='open' %}selected{% endif %}>Open</option>
+                        <option value="in_progress" {% if complaint['status']=='in_progress' %}selected{% endif %}>In Progress</option>
+                        <option value="resolved" {% if complaint['status']=='resolved' %}selected{% endif %}>Resolved</option>
+                        <option value="closed" {% if complaint['status']=='closed' %}selected{% endif %}>Closed</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="priority">Priority</label>
+                    <select id="priority" name="priority" class="form-control">
+                        {% for p in range(1, 6) %}
+                        <option value="{{ p }}" {% if complaint['priority'] == p %}selected{% endif %}>{{ p }} - {{ {1:'Critical',2:'High',3:'Medium',4:'Low',5:'Minimal'}[p] }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                {% if session.get('role') == 'admin' %}
+                <div class="form-group">
+                    <label for="technician_id">Assign Technician</label>
+                    <select id="technician_id" name="technician_id" class="form-control">
+                        <option value="">Unassigned</option>
+                        {% for t in technicians %}
+                        <option value="{{ t['id'] }}" {% if complaint['technician_id'] == t['id'] %}selected{% endif %}>{{ t['full_name'] }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endif %}
+
+                <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center;">Update</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
