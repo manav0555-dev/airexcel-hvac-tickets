@@ -71,6 +71,20 @@
             </div>
         </div>
 
+        <div class="form-row">
+            <div class="form-group">
+                <label for="scheduled_date">Scheduled Date &amp; Time (IST)</label>
+                <input type="datetime-local" id="scheduled_date" name="scheduled_date" class="form-control">
+            </div>
+            <div class="form-group">
+                <label for="scheduled_end">End Time (IST)</label>
+                <input type="datetime-local" id="scheduled_end" name="scheduled_end" class="form-control">
+            </div>
+        </div>
+        <p style="font-size:.85rem; color:var(--gray-500); margin-top:-8px;">
+            Setting a technician + schedule will automatically create a job in Odoo Planning.
+        </p>
+
         <div class="form-group">
             <label for="priority">Priority (1 = Critical, 5 = Minimal)</label>
             <select id="priority" name="priority" class="form-control">
