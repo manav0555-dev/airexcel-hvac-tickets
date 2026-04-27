@@ -58,6 +58,10 @@
                     <div class="value">{{ complaint['site_name'] or '—' }}</div>
                 </div>
                 <div class="detail-item">
+                    <div class="label">Scheduled</div>
+                    <div class="value">{{ complaint['scheduled_date'] or '—' }}</div>
+                </div>
+                <div class="detail-item">
                     <div class="label">Created</div>
                     <div class="value">{{ complaint['created_at'] }}</div>
                 </div>
@@ -72,6 +76,17 @@
                 </div>
                 {% endif %}
             </div>
+
+            {% if complaint['odoo_slot_id'] %}
+            <div class="detail-item" style="margin-top:12px;">
+                <div class="label">Odoo Planning</div>
+                <div class="value">
+                    <a href="{{ odoo_base_url }}/web#model=planning.slot&id={{ complaint['odoo_slot_id'] }}" target="_blank" class="btn btn-secondary btn-sm">
+                        View in Odoo →
+                    </a>
+                </div>
+            </div>
+            {% endif %}
         </div>
 
         <!-- Notes -->
@@ -133,6 +148,22 @@
                         {% endfor %}
                     </select>
                 </div>
+
+                <div class="form-group">
+                    <label for="scheduled_date">Scheduled Date &amp; Time (IST)</label>
+                    <input type="datetime-local" id="scheduled_date" name="scheduled_date" class="form-control"
+                           value="{{ complaint['scheduled_date'][:16] if complaint['scheduled_date'] else '' }}">
+                </div>
+                <div class="form-group">
+                    <label for="scheduled_end">End Time (IST)</label>
+                    <input type="datetime-local" id="scheduled_end" name="scheduled_end" class="form-control"
+                           value="{{ complaint['scheduled_end'][:16] if complaint['scheduled_end'] else '' }}">
+                </div>
+                {% if not complaint['odoo_slot_id'] %}
+                <p style="font-size:.82rem; color:var(--gray-500);">Set technician + schedule to sync to Odoo Planning.</p>
+                {% else %}
+                <p style="font-size:.82rem; color:green;">✓ Synced to Odoo slot #{{ complaint['odoo_slot_id'] }}</p>
+                {% endif %}
                 {% endif %}
 
                 <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center;">Update</button>
