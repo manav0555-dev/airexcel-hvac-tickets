@@ -4,7 +4,8 @@ import hashlib
 import secrets
 import random
 import string
-from datetime import datetime
+import xmlrpc.client
+from datetime import datetime, timedelta
 from functools import wraps
 from flask import (
     Flask, render_template, request, redirect, url_for,
@@ -14,6 +15,86 @@ from flask import (
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
 DATABASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hvac_tickets.db")
+
+# ── Odoo sync config ────────────────────────────────────────────────────────
+
+ODOO_URL = os.environ.get("ODOO_URL", "https://airexcelhvac.odoo.com")
+ODOO_DB = os.environ.get("ODOO_DB", "airexcelhvac")
+ODOO_UID = int(os.environ.get("ODOO_UID", "2"))
+ODOO_KEY = os.environ.get("ODOO_KEY", "27aa94dd790f0865e26a85b505b85a6486f2f5ca")
+
+# Maps ticket app technician full_name (lowercase) → Odoo employee ID
+ODOO_EMPLOYEE_MAP = {
+    "amjad": 18,
+    "narendra kumar": 16,
+    "rahul": 21,
+    "shahrukh": 23,
+    "sonu": 20,
+}
+
+
+def get_odoo_models():
+    return xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object", allow_none=True)
+
+
+def sync_slot_to_odoo(db, complaint_id):
+    """Create or update an Odoo planning.slot for the given ticket."""
+    try:
+        complaint = db.execute("""
+            SELECT c.*, u.full_name as technician_name
+            FROM complaints c
+            LEFT JOIN users u ON c.technician_id = u.id
+            WHERE c.id = ?
+        """, (complaint_id,)).fetchone()
+
+        if not complaint or not complaint["technician_id"] or not complaint["scheduled_date"]:
+            return
+
+        tech_name = (complaint["technician_name"] or "").strip().lower()
+        odoo_emp_id = ODOO_EMPLOYEE_MAP.get(tech_name)
+        if not odoo_emp_id:
+            return
+
+        # Convert IST (UTC+5:30) → UTC
+        sched = datetime.fromisoformat(complaint["scheduled_date"])
+        sched_utc = sched - timedelta(hours=5, minutes=30)
+        if complaint["scheduled_end"]:
+            end_utc = datetime.fromisoformat(complaint["scheduled_end"]) - timedelta(hours=5, minutes=30)
+        else:
+            end_utc = sched_utc + timedelta(hours=2)
+
+        slot_data = {
+            "name": f"[{complaint['ticket_id']}] {complaint['title']}",
+            "employee_ids": [(6, 0, [odoo_emp_id])],
+            "start_datetime": sched_utc.strftime("%Y-%m-%d %H:%M:%S"),
+            "end_datetime": end_utc.strftime("%Y-%m-%d %H:%M:%S"),
+            "allocation_type": "planning",
+        }
+
+        models = get_odoo_models()
+        if complaint["odoo_slot_id"]:
+            models.execute_kw(ODOO_DB, ODOO_UID, ODOO_KEY,
+                "planning.slot", "write",
+                [[complaint["odoo_slot_id"]], slot_data])
+        else:
+            slot_id = models.execute_kw(ODOO_DB, ODOO_UID, ODOO_KEY,
+                "planning.slot", "create", [slot_data])
+            db.execute("UPDATE complaints SET odoo_slot_id = ? WHERE id = ?",
+                       (slot_id, complaint_id))
+            db.commit()
+    except Exception as e:
+        app.logger.error(f"Odoo sync error: {e}")
+
+
+def complete_odoo_slot(slot_id):
+    """Mark an Odoo planning.slot as completed."""
+    try:
+        models = get_odoo_models()
+        models.execute_kw(ODOO_DB, ODOO_UID, ODOO_KEY,
+            "planning.slot", "write",
+            [[slot_id], {"state": "completed"}])
+    except Exception as e:
+        app.logger.error(f"Odoo slot complete error: {e}")
 
 
 # ── Database helpers ────────────────────────────────────────────────────────
@@ -34,9 +115,8 @@ def close_db(exc):
 
 
 def generate_ticket_id():
-    """Generate a unique ticket ID like HVAC-A3X7K2."""
     chars = string.ascii_uppercase + string.digits
-    suffix = ''.join(random.choices(chars, k=6))
+    suffix = "".join(random.choices(chars, k=6))
     return f"HVAC-{suffix}"
 
 
@@ -45,14 +125,19 @@ def init_db():
     db.execute("PRAGMA foreign_keys = ON")
     db.executescript(SCHEMA)
 
-    # Migrate: add ticket_id column if missing (existing databases)
     cols = [r[1] for r in db.execute("PRAGMA table_info(complaints)").fetchall()]
     if "ticket_id" not in cols:
         db.execute("ALTER TABLE complaints ADD COLUMN ticket_id TEXT")
         db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ticket_id ON complaints(ticket_id)")
     if "customer_email" not in cols:
         db.execute("ALTER TABLE complaints ADD COLUMN customer_email TEXT")
-    # Back-fill ticket IDs for any existing complaints without one
+    if "scheduled_date" not in cols:
+        db.execute("ALTER TABLE complaints ADD COLUMN scheduled_date TIMESTAMP")
+    if "scheduled_end" not in cols:
+        db.execute("ALTER TABLE complaints ADD COLUMN scheduled_end TIMESTAMP")
+    if "odoo_slot_id" not in cols:
+        db.execute("ALTER TABLE complaints ADD COLUMN odoo_slot_id INTEGER")
+
     rows = db.execute("SELECT id FROM complaints WHERE ticket_id IS NULL").fetchall()
     for row in rows:
         tid = generate_ticket_id()
@@ -60,7 +145,6 @@ def init_db():
     if rows:
         db.commit()
 
-    # Seed default admin if no users exist
     row = db.execute("SELECT COUNT(*) FROM users").fetchone()
     if row[0] == 0:
         pw_hash = hashlib.sha256("admin123".encode()).hexdigest()
@@ -102,6 +186,9 @@ CREATE TABLE IF NOT EXISTS complaints (
     priority INTEGER NOT NULL DEFAULT 3 CHECK(priority BETWEEN 1 AND 5),
     status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','in_progress','resolved','closed')),
     category TEXT,
+    scheduled_date TIMESTAMP,
+    scheduled_end TIMESTAMP,
+    odoo_slot_id INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     resolved_at TIMESTAMP,
@@ -214,18 +301,15 @@ def register():
 def dashboard():
     db = get_db()
 
-    # Stats
     total = db.execute("SELECT COUNT(*) FROM complaints").fetchone()[0]
     open_count = db.execute("SELECT COUNT(*) FROM complaints WHERE status='open'").fetchone()[0]
     in_progress = db.execute("SELECT COUNT(*) FROM complaints WHERE status='in_progress'").fetchone()[0]
     resolved = db.execute("SELECT COUNT(*) FROM complaints WHERE status IN ('resolved','closed')").fetchone()[0]
 
-    # Priority breakdown
     priority_data = db.execute(
         "SELECT priority, COUNT(*) as cnt FROM complaints WHERE status NOT IN ('closed') GROUP BY priority ORDER BY priority"
     ).fetchall()
 
-    # Top repeat offenders (technicians with most complaints)
     repeat_technicians = db.execute("""
         SELECT u.full_name, COUNT(c.id) as complaint_count
         FROM complaints c
@@ -236,7 +320,6 @@ def dashboard():
         LIMIT 10
     """).fetchall()
 
-    # Repeat customers
     repeat_customers = db.execute("""
         SELECT customer_name, COUNT(*) as complaint_count
         FROM complaints
@@ -246,7 +329,6 @@ def dashboard():
         LIMIT 10
     """).fetchall()
 
-    # Category breakdown
     category_data = db.execute("""
         SELECT COALESCE(category, 'Uncategorized') as cat, COUNT(*) as cnt
         FROM complaints
@@ -254,7 +336,6 @@ def dashboard():
         ORDER BY cnt DESC
     """).fetchall()
 
-    # Recent complaints
     recent = db.execute("""
         SELECT c.*, u.full_name as technician_name, js.name as site_name
         FROM complaints c
@@ -263,7 +344,6 @@ def dashboard():
         ORDER BY c.created_at DESC LIMIT 10
     """).fetchall()
 
-    # Job site breakdown
     site_data = db.execute("""
         SELECT COALESCE(js.name, 'Unassigned') as site_name, COUNT(c.id) as cnt
         FROM complaints c
@@ -311,7 +391,6 @@ def complaints_list():
         query += " AND (c.title LIKE ? OR c.description LIKE ? OR c.customer_name LIKE ?)"
         params.extend([f"%{search}%"] * 3)
 
-    # Technicians only see their own complaints
     if session.get("role") == "technician":
         query += " AND c.technician_id = ?"
         params.append(session["user_id"])
@@ -348,6 +427,8 @@ def new_complaint():
         technician_id = request.form.get("technician_id") or None
         priority = int(request.form.get("priority", 3))
         category = request.form.get("category", "").strip() or None
+        scheduled_date = request.form.get("scheduled_date") or None
+        scheduled_end = request.form.get("scheduled_end") or None
 
         if not all([title, description, customer_name]):
             flash("Title, description, and customer name are required.", "danger")
@@ -356,11 +437,14 @@ def new_complaint():
             db.execute("""
                 INSERT INTO complaints
                 (ticket_id, title, description, customer_name, customer_phone, job_site_id,
-                 technician_id, priority, category, created_by)
-                VALUES (?,?,?,?,?,?,?,?,?,?)
+                 technician_id, priority, category, created_by, scheduled_date, scheduled_end)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
             """, (ticket_id, title, description, customer_name, customer_phone,
-                  job_site_id, technician_id, priority, category, session["user_id"]))
+                  job_site_id, technician_id, priority, category, session["user_id"],
+                  scheduled_date, scheduled_end))
             db.commit()
+            complaint = db.execute("SELECT id FROM complaints WHERE ticket_id = ?", (ticket_id,)).fetchone()
+            sync_slot_to_odoo(db, complaint["id"])
             flash("Complaint created successfully.", "success")
             return redirect(url_for("complaints_list"))
 
@@ -399,7 +483,8 @@ def view_complaint(complaint_id):
     job_sites = db.execute("SELECT id, name FROM job_sites ORDER BY name").fetchall()
 
     return render_template("view_complaint.html", complaint=complaint,
-        notes=notes, technicians=technicians, job_sites=job_sites)
+        notes=notes, technicians=technicians, job_sites=job_sites,
+        odoo_base_url=ODOO_URL)
 
 
 @app.route("/complaints/<int:complaint_id>/update", methods=["POST"])
@@ -409,6 +494,8 @@ def update_complaint(complaint_id):
     status = request.form.get("status")
     technician_id = request.form.get("technician_id") or None
     priority = request.form.get("priority")
+    scheduled_date = request.form.get("scheduled_date") or None
+    scheduled_end = request.form.get("scheduled_end") or None
 
     updates = ["updated_at = CURRENT_TIMESTAMP"]
     params = []
@@ -427,9 +514,25 @@ def update_complaint(complaint_id):
         updates.append("priority = ?")
         params.append(int(priority))
 
+    if scheduled_date is not None:
+        updates.append("scheduled_date = ?")
+        params.append(scheduled_date)
+
+    if scheduled_end is not None:
+        updates.append("scheduled_end = ?")
+        params.append(scheduled_end)
+
     params.append(complaint_id)
     db.execute(f"UPDATE complaints SET {', '.join(updates)} WHERE id = ?", params)
     db.commit()
+
+    # Sync to Odoo after update
+    complaint = db.execute("SELECT odoo_slot_id, status FROM complaints WHERE id = ?", (complaint_id,)).fetchone()
+    if status in ("resolved", "closed") and complaint["odoo_slot_id"]:
+        complete_odoo_slot(complaint["odoo_slot_id"])
+    else:
+        sync_slot_to_odoo(db, complaint_id)
+
     flash("Complaint updated.", "success")
     return redirect(url_for("view_complaint", complaint_id=complaint_id))
 
@@ -497,14 +600,13 @@ def manage_users():
     return render_template("users.html", users=users)
 
 
-# ── Insights API (for charts) ──────────────────────────────────────────────
+# ── Insights API ────────────────────────────────────────────────────────────
 
 @app.route("/api/insights")
 @login_required
 def api_insights():
     db = get_db()
 
-    # Monthly trend (last 12 months)
     monthly = db.execute("""
         SELECT strftime('%Y-%m', created_at) as month, COUNT(*) as cnt
         FROM complaints
@@ -513,7 +615,6 @@ def api_insights():
         LIMIT 12
     """).fetchall()
 
-    # Avg resolution time (in hours)
     avg_resolution = db.execute("""
         SELECT ROUND(AVG(
             (julianday(resolved_at) - julianday(created_at)) * 24
@@ -528,7 +629,7 @@ def api_insights():
     })
 
 
-# ── Client-facing pages (no login required) ────────────────────────────────
+# ── Client-facing pages ─────────────────────────────────────────────────────
 
 @app.route("/client")
 def client_home():
